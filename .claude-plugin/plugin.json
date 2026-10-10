@@ -1,0 +1,9 @@
+{
+  "name": "pr-watch",
+  "version": "0.1.0",
+  "description": "Watch your PRs' CI and review comments in a band above the prompt, and hand failures or comments to Claude",
+  "author": { "name": "Shahar Zaks", "url": "https://github.com/shaharz" },
+  "repository": "https://github.com/shaharz/pr-watch",
+  "license": "MIT",
+  "types": "./types/index.d.ts"
+}

@@ -1,0 +1,5 @@
+{
+  "name": "pr-watch",
+  "owner": { "name": "Shahar Zaks" },
+  "plugins": [{ "name": "pr-watch", "source": "./" }]
+}
