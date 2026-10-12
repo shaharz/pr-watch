@@ -1,6 +1,6 @@
 # pr-watch
 
-A Claude Code mod that watches your pull requests in a small panel above the prompt, anchored right: CI status, new review comments (Codex included) and Codex's review status, with one-click or automatic hand-off of failures and comments to Claude.
+A Claude Code mod that watches your pull requests: a panel above the prompt, sized to its content (collapse or expand it with the band's `[-]` or ctrl+x ctrl+a), and a summary (`PRs ❌ 1 💬 2 ✅ 4 · ctrl+x ctrl+a`) at the end of the hint line under the prompt: CI status, new review comments (Codex included) and Codex's review status, with one-click or automatic hand-off of failures and comments to Claude.
 
 ## Install
 
@@ -31,6 +31,8 @@ Change them with `/pr-watch prompt ci <text>` or `/pr-watch prompt comments <tex
 
 ## Commands
 
-`/pr-watch` (status), `/pr-watch add <url|number>`, `/pr-watch rm <number>`, `/pr-watch auto <number|all> on|off`, `/pr-watch prompt ci|comments [text|default]`, `/pr-watch width <columns|full>` (default 80; the band can't be dragged), `/pr-watch refresh`.
+`/pr-watch` (status), `/pr-watch add <url|number>`, `/pr-watch rm <number>`, `/pr-watch auto <number|all> on|off`, `/pr-watch prompt ci|comments [text|default]`, `/pr-watch refresh`.
 
 Comments from `github-actions` and `linear-code` are ignored, as are your own.
+
+Claude Code's own single-PR footer can be turned off under `/config` → "Show PR status footer", leaving this summary in its place.

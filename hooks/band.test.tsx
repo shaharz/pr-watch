@@ -60,7 +60,6 @@ function fakeEngine(on: On, submitted: string[]) {
   on('session.start', async () => ({ cwd: '/repo' }))
   on('session.cwd', async () => ({ value: '/repo' }))
   on('ui.toast', async () => ({ value: undefined }) as never)
-  on('ui.notify', async () => ({ value: { isSent: true, channel: 'iterm2' } }) as never)
   on('prompt.submit', async (_$, e) => {
     submitted.push(e.text)
 
@@ -94,7 +93,7 @@ test('a watched PR shows failures and Codex comments; auto hands both off once',
   await ui.press({ key: 'o/r#7:seen' })
   expect(await ui.find({ text: /💬/ })).toBeUndefined()
   await ui.press({ key: 'o/r#7:rm' })
-  const status = await $.command.run({ command: 'pr-watch', args: '' } as never)
+  const status = await $.command.run({ command: 'pr-watch', args: 'status' } as never)
   expect(status).toMatchObject({ text: expect.stringContaining('Not watching any PRs') })
 })
 
@@ -140,4 +139,25 @@ test('an aborted gh call leaves the row as it was, with no error', async ($, on)
   await $.command.run({ command: 'pr-watch', args: 'refresh' } as never)
   expect(await ui.find({ text: /⚠/ })).toBeUndefined()
   expect(await ui.find({ text: /❌ 1 unit \/ air/ })).toBeDefined()
+})
+
+test('the footer carries the summary; the list above the prompt fits its content', async ($, on) => {
+  const submitted: string[] = []
+  fakeEngine(on, submitted)
+  on('ui.render', { component: 'PromptHint' }, async ($, e) => {
+    const { Text } = $.ui.resolve(e)
+
+    return <Text>{`${e.props.hint} ${e.props.tail ?? ''}`}</Text>
+  })
+  await $.session.start({ source: 'startup', cwd: '/repo' } as never)
+  await $.command.run({ command: 'pr-watch', args: 'add https://github.com/o/r/pull/7' } as never)
+
+  const hint = await $.ui.mount({ plugin: 'pr-watch', surface: 'terminal', component: 'PromptHint', props: { isDraft: false, isWorking: false, hint: '? for shortcuts' } } as never)
+  expect(await hint.find({ text: '? for shortcuts PRs ❌ 1 💬 1 · ctrl+x ctrl+a' })).toBeDefined()
+
+  const band = await $.ui.mount({ ...(BAND as object), surface: 'terminal' } as never)
+  expect(await band.find({ text: /Number adults first/ })).toBeDefined()
+  const panel = ((await band.drawn()) as { children: { props: { width: number } }[] }).children[0]
+  expect(panel?.props.width).toBeLessThan(120)
+  expect(panel?.props.width).toBeGreaterThan(40)
 })

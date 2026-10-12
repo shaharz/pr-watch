@@ -7,8 +7,6 @@ import type { Decision } from './lib'
 
 const POLL_MS = 60_000
 const INSTRUCTIONS_KEY = { ci: 'instructions.ci', comments: 'instructions.comments' } as const
-const WIDTH_KEY = 'width'
-const DEFAULT_WIDTH = 80
 
 const prs = atom({ plugin: 'pr-watch', key: 'prs' } as const, [])
 
@@ -204,6 +202,53 @@ async function openUrl($: $, url: string): Promise<void> {
   if (opened?.exitCode !== 0) await $.process.run(['xdg-open', url]).catch(() => undefined)
 }
 
+const EMOJI = /[❌⏳✅💬📨🔧🔍👍]/gu
+
+/** Terminal cells a line takes: the emoji the panel draws are two cells wide. */
+function cells(text: string): number {
+  return [...text].length + (text.match(EMOJI)?.length ?? 0)
+}
+
+/** The widest line a PR's two rows want, so the panel can fit its content. */
+function rowCells(pr: WatchedPr): number {
+  const s = pr.snapshot
+  const title = cells(`#${pr.number}${s?.isDraft ? ' draft' : ''} ${s?.title ?? pr.error ?? 'loading…'} ×`)
+  if (s === undefined) return title
+  const c = s.checks
+  const fresh = unseen(pr)
+  const isOpen = s.state === 'OPEN'
+  const parts = [
+    !isOpen && s.state.toLowerCase(),
+    isOpen && c.failed.length > 0 && `❌ ${c.failed.length} ${c.failed.map(f => f.name).join(', ')}`,
+    isOpen && c.failed.length > 0 && ' 🔧 fix ',
+    isOpen && c.pending > 0 && `⏳ ${c.pending}`,
+    isOpen && c.failed.length === 0 && c.pending === 0 && c.total > 0 && `✅ ${c.passed}`,
+    isOpen && c.total === 0 && 'no checks',
+    fresh.length > 0 && `💬 ${fresh.length} (${[...new Set(fresh.map(x => x.author.replace('chatgpt-codex-connector', 'codex')))].join(', ')})`,
+    fresh.length > 0 && ' 📨 assess ',
+    fresh.length > 0 && 'dismiss',
+    s.codex === 'reviewing' && '🔍 codex',
+    s.codex === 'done' && fresh.length === 0 && 'codex 👍',
+    pr.error && `⚠ ${pr.error}`,
+    isOpen && 'auto off',
+  ].filter((x): x is string => typeof x === 'string')
+
+  return Math.max(title, parts.reduce((n, x) => n + cells(x), 0) + 2 * parts.length)
+}
+
+function summaryText(list: WatchedPr[]): string | undefined {
+  if (list.length === 0) return undefined
+  const open = list.filter(p => p.snapshot?.state === 'OPEN')
+  const count = (fn: (c: WatchedPr['snapshot'] & object) => boolean) => open.filter(p => p.snapshot !== undefined && fn(p.snapshot)).length
+  const failing = count(s => s.checks.failed.length > 0)
+  const running = count(s => s.checks.failed.length === 0 && s.checks.pending > 0)
+  const passing = count(s => s.checks.failed.length === 0 && s.checks.pending === 0 && s.checks.total > 0)
+  const comments = list.reduce((n, p) => n + unseen(p).length, 0)
+  const parts = [failing > 0 && `❌ ${failing}`, running > 0 && `⏳ ${running}`, comments > 0 && `💬 ${comments}`, passing > 0 && `✅ ${passing}`].filter(Boolean)
+
+  return `PRs ${parts.join(' ')}`
+}
+
 async function unwatch($: $, which: string): Promise<void> {
   await update($, prs, list => list.filter(p => p.key !== which && String(p.number) !== which.replace(/^#/, '')))
 }
@@ -223,7 +268,7 @@ function statusText(list: WatchedPr[]): string {
     .join('\n')
 }
 
-const HELP = '/pr-watch [add <url|number> | rm <number> | auto <number|all> on|off | prompt ci|comments [text|default] | width <columns|full> | refresh]'
+const HELP = '/pr-watch [add <url|number> | rm <number> | auto <number|all> on|off | prompt ci|comments [text|default] | refresh]'
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
@@ -264,7 +309,7 @@ export const register: Register = on => {
     const [verb = '', ...rest] = e.args.trim().split(/\s+/).filter(t => t !== '')
     const cwd = await $.session.cwd()
 
-    if (verb === '') return { text: statusText(await read($, prs)) }
+    if (verb === '' || verb === 'status') return { text: statusText(await read($, prs)) }
     if (verb === 'add') return { text: await watch($, rest.join(' '), cwd) }
     if (verb === 'rm' && rest[0]) {
       await unwatch($, rest[0])
@@ -287,12 +332,6 @@ export const register: Register = on => {
       if (text !== '') await $.store.set(INSTRUCTIONS_KEY[what], text === 'default' ? '' : text)
 
       return { text: `Hand-off instructions for ${what === 'ci' ? 'failing checks' : 'comments'}:\n${await instructions($, what)}` }
-    }
-    if (verb === 'width' && rest[0] && (rest[0] === 'full' || Number(rest[0]) >= 30)) {
-      await $.store.set(WIDTH_KEY, rest[0] === 'full' ? 'full' : Number(rest[0]))
-      $.ui.invalidate('ui.render')
-
-      return { text: `PR panel width: ${rest[0] === 'full' ? 'full width' : `${rest[0]} columns`}` }
     }
     if (verb === 'refresh') {
       await pollAll($)
@@ -328,16 +367,25 @@ export const register: Register = on => {
     return ran
   }).catch((_$, e, next) => next(e))
 
+  on('ui.render', { component: 'PromptHint' }, async ($, e, next) => {
+    const summary = summaryText(await read($, prs))
+    if (summary === undefined) return next(e)
+    const tail = [e.props.tail, `${summary} · ctrl+x ctrl+a`].filter(Boolean).join('  ')
+
+    return next({ ...e, props: { ...e.props, tail } })
+  })
+
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const list = await read($, prs)
     if (list.length === 0 || e.props.hasSurvey) return next(e)
     const { Box, Button, Text } = $.ui.resolve(e)
-    const wanted = await $.store.get(WIDTH_KEY)
-    const width = wanted === 'full' ? e.props.bodyColumns : Math.min(typeof wanted === 'number' ? wanted : DEFAULT_WIDTH, e.props.bodyColumns)
+    // The panel fits its widest row; the band's own [-] (ctrl+x ctrl+a) collapses it.
+    const boxWidth = Math.min(e.props.bodyColumns, Math.max(...list.map(rowCells)) + 4)
+    const width = boxWidth - 4
 
     return (
-      <Box flexDirection="column" alignItems="flex-end">
-        <Box flexDirection="column" width={width} borderStyle="round" borderDimColor paddingX={1}>
+      <Box flexDirection="column" alignItems="flex-start">
+        <Box flexDirection="column" width={boxWidth} borderStyle="round" borderDimColor paddingX={1}>
           {list.map((pr, index) => {
             const s = pr.snapshot
             const fresh = unseen(pr)
@@ -347,7 +395,7 @@ export const register: Register = on => {
 
             return (
               <Box key={pr.key} flexDirection="column">
-                {index > 0 && <Text dimColor>{'─'.repeat(Math.max(1, width - 4))}</Text>}
+                {index > 0 && <Text dimColor>{'─'.repeat(Math.max(1, width))}</Text>}
                 <Box flexDirection="row" gap={1}>
                   <Box flexShrink={1} flexGrow={1}>
                     {s === undefined ? (
